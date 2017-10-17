@@ -1,69 +1,77 @@
 /* circuitSatifiability.c solves the Circuit Satisfiability
- *  Problem using a brute-force sequential solution.
- *
- *   The particular circuit being tested is "wired" into the
- *   logic of function 'checkCircuit'. All combinations of
- *   inputs that satisfy the circuit are printed.
- *
- *   16-bit version by Michael J. Quinn, Sept 2002.
- *   Extended to 32 bits by Joel C. Adams, Sept 2013.
- */
+ *  *  Problem using a brute-force sequential solution.
+ *   *
+ *    *   The particular circuit being tested is "wired" into the
+ *     *   logic of function 'checkCircuit'. All combinations of
+ *      *   inputs that satisfy the circuit are printed.
+ *       *
+ *        *   16-bit version by Michael J. Quinn, Sept 2002.
+ *         *   Extended to 32 bits by Joel C. Adams, Sept 2013.
+ *          */
 
-#include <stdio.h>		//printf()
-#include <limits.h>		//UINT_MAX
-#include <mpi.h>		//MPI library
+#include <stdio.h>     // printf()
+#include <limits.h>    // UINT_MAX
+#include <mpi.h>
 
 int checkCircuit (int, long);
 
-int main (int argc, char *argv[]) {
-	long i;               /* loop variable (64 bits) */
-	int count = 0;        /* number of solutions */
+int main (int argc, char *argv[]) 
+{
+	long i, j = 2;
+	int count = 0;
+	int numprocs, myid;
 	int mycount = 0;
-	int numprocs, myid, namelen;
 	double startTime = 0.0, totalTime = 0.0;
 
-	MPI_Init(&argc, &argv);								//MPI Initialize
-	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	MPI_Init(&argc, &argv);					//Initialize MPI
+	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);		
 	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
-	if (myid == 0)										//Start of first process
+	if (myid == 0)						//start to count time
 		startTime = MPI_Wtime();
 
-	for (i = myid; i <= UINT_MAX; i += numprocs) {		//count part in every process
+	for (i = myid; i <= UINT_MAX; i += numprocs)		//count part in process
 		mycount += checkCircuit (myid, i);
+
+	for (j = 2; j <= numprocs; j*=2)			//tree-structured communication 
+	{
+		if (myid%j == j/2)				//1 3 5 7 send; 2 6 send; 4 send
+			MPI_Send(&mycount, 1, MPI_INT, myid-(j/2), 0, MPI_COMM_WORLD);
+		else if(myid%j == 0)				//0 2 4 6 recv; 0 4 recv; 0 recv
+		{
+			MPI_Recv(&count, 1, MPI_INT, myid+(j/2), 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			mycount += count;
+		}
 	}
 
-	MPI_Reduce(&mycount, &count, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);	//sum every mycount in each process to count
-
-	//printf ("Process %d finished.\n", id);
-
-	if (myid == 0) {
+	if (myid == 0) {					//print the result
 		totalTime = MPI_Wtime() - startTime;
-		printf("\nA total of %d solutions were found.\n\n", count);
-		printf("Finished time = %f secs\n", totalTime);
+		printf("\nA total of %d solutions were found.\n\n", mycount);
+		printf("Finished time = %f secs.\n", totalTime);
 		fflush(stdout);
 	}
+	MPI_Finalize();
 	return 0;
 }
 
 /* EXTRACT_BIT is a macro that extracts the ith bit of number n.
- *
- * parameters: n, a number;
- *             i, the position of the bit we want to know.
- *
- * return: 1 if 'i'th bit of 'n' is 1; 0 otherwise 
- */
+ *  *
+ *   * parameters: n, a number;
+ *    *             i, the position of the bit we want to know.
+ *     *
+ *      * return: 1 if 'i'th bit of 'n' is 1; 0 otherwise 
+ *       */
 
 #define EXTRACT_BIT(n,i) ( (n & (1<<i) ) ? 1 : 0)
 
 
 /* checkCircuit() checks the circuit for a given input.
- * parameters: id, the id of the process checking;
- *             bits, the (long) rep. of the input being checked.
- *
- * output: the binary rep. of bits if the circuit outputs 1
- * return: 1 if the circuit outputs 1; 0 otherwise.
- */
+ *  * parameters: id, the id of the process checking;
+ *   *             bits, the (long) rep. of the input being checked.
+ *    *
+ *     * output: the binary rep. of bits if the circuit outputs 1
+ *      * return: 1 if the circuit outputs 1; 0 otherwise.
+ *       */
 
 #define SIZE 32
 
@@ -104,4 +112,5 @@ int checkCircuit (int id, long bits) {
 		return 0;
 	}
 }
+
 
