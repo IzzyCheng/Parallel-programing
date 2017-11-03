@@ -9,15 +9,15 @@
 
 using namespace std;
 
-//¿¿¿¿¿¿¿¿¿
+//define Smooth times
 #define NSmooth 1000
 
 /*********************************************************/
-/*¿¿¿¿¿                                             */
-/*  bmpHeader    ¿BMP¿¿¿¿                          */
-/*  bmpInfo      ¿BMP¿¿¿¿                          */
-/*  **BMPSaveData¿¿¿¿¿¿¿¿¿¿¿¿               */
-/*  **BMPData    ¿¿¿¿¿¿¿¿¿¿¿¿¿¿           */
+/*variable declare                                       */
+/*  bmpHeader    : BMPfile Header                        */
+/*  bmpInfo      : BMPfile Info                          */
+/*  **BMPSaveData: Store BmpData to be saved             */
+/*  **BMPData    : temp BmpData to be Saved              */
 /*********************************************************/
 BMPHEADER bmpHeader;                        
 BMPINFO bmpInfo;
@@ -25,26 +25,26 @@ RGBTRIPLE **BMPSaveData = NULL;
 RGBTRIPLE **BMPData = NULL;                                                   
 
 /*********************************************************/
-/*¿¿¿¿                                             */
-/*  readBMP    ¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿BMPSavaData*/
-/*  saveBMP    ¿¿¿¿¿¿¿¿¿¿¿¿BMPSaveData¿¿  */
-/*  swap       ¿¿¿¿¿¿¿                           */
-/*  **alloc_memory¿¿¿¿¿¿¿Y*X¿¿                 */
+/*function declare                                       */
+/*  readBMP    : read BMPfile and save in BMPSavaData    */
+/*  saveBMP    : write BMPfile with data in BMPSaveData  */
+/*  swap       : swap BMPData and BMPSaveData            */
+/*  **alloc_memory : dynamic allocate a Y*X array        */
 /*********************************************************/
-int readBMP( char *fileName);        //read file
-int saveBMP( char *fileName);        //save file
+int readBMP( char *fileName);        		//read file
+int saveBMP( char *fileName);        		//save file
 void swap(RGBTRIPLE *a, RGBTRIPLE *b);
-RGBTRIPLE **alloc_memory( int Y, int X );        //allocate memory
+RGBTRIPLE **alloc_memory( int Y, int X );	//allocate memory
 
 int main(int argc,char *argv[])
 {
-	/*********************************************************/
-	/*¿¿¿¿¿                                             */
-	/*  *infileName  ¿¿¿¿¿                             */
-	/*  *outfileName ¿¿¿¿¿                             */
-	/*  startwtime   ¿¿¿¿¿¿¿                         */
-	/*  endwtime     ¿¿¿¿¿¿¿                         */
-	/*********************************************************/
+/*********************************************************/
+/*variable declare                                       */
+/*  *infileName  : read file name                        */
+/*  *outfileName : write file name                       */
+/*  startwtime   : record startTime                      */
+/*  endwtime     : record endTime                        */
+/*********************************************************/
 	char *infileName = "input.bmp";
 	char *outfileName = "output2.bmp";
 	double startwtime = 0.0, endwtime=0;
@@ -57,16 +57,17 @@ int main(int argc,char *argv[])
 
 	if (myid == 0)
 	{
-		//start time
-		startwtime = MPI_Wtime();
 		//readfile
 		if ( readBMP( infileName) )
 			cout << "Read file successfully!!" << endl;
 		else 
 			cout << "Read file fails!!" << endl;
+		//startTime
+		startwtime = MPI_Wtime();
+	
+		//Get bmpInfo to be sent
 		height = bmpInfo.biHeight;
 		width = bmpInfo.biWidth;
-		printf("local height : %d\n\n", height/numprocs);
 	}
 
 	//Brocast height & width to other proc
@@ -76,69 +77,105 @@ int main(int argc,char *argv[])
 
 	//allocate memory
 	BMPData = alloc_memory(height/numprocs, width);
+	RGBTRIPLE **BMPtemp = alloc_memory(height/numprocs, width);
 
 	//create new data type
 	MPI_Datatype MPI_RGB;
 	MPI_Type_contiguous(3, MPI_CHAR, &MPI_RGB);
 	MPI_Type_commit(&MPI_RGB);
 
-	//Scatter data
+	//global pointer for SaveData
 	RGBTRIPLE *globalptr = NULL;
 	if (myid == 0)
 		globalptr = &(BMPSaveData[0][0]);
-	MPI_Scatter(globalptr, height/numprocs*width, MPI_RGB, &(BMPData[0][0]), height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
+
+	//Scatter BMPData from rank 0
+	int sendcount[numprocs];
+	int disp[numprocs];
+	for (int i = 0; i<numprocs; i++)
+		sendcount[i] = height/numprocs*width;
+	//sendcount[numprocs-1] = height*width - height*width*(numprocs-1)/numprocs;
+	for (int i = 0; i<numprocs; i++)
+		disp[i] = i*height/numprocs*width;
+	MPI_Scatterv(globalptr, sendcount, disp, MPI_RGB, &(BMPtemp[0][0]), height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	if (myid == 0) {
-		for (int i = 0; i<height; i++)
-			for (int j = 0; j<width; j++) {
-				BMPSaveData[i][j].rgbBlue = 0;
-				BMPSaveData[i][j].rgbGreen = 0;
-				BMPSaveData[i][j].rgbRed = 0;
+	//Create edge array
+	RGBTRIPLE **BMPupper = alloc_memory(1, width);
+	RGBTRIPLE **BMPdown = alloc_memory(1, width);
+
+	//Start to Smooth Data
+	for(int count = 0; count < NSmooth ; count ++){
+
+		//update the edge data
+		int upper = myid > 0 ? myid-1 : numprocs-1;
+		int down = myid < numprocs-1 ? myid+1 : 0;
+		
+		//Send upper
+		if (numprocs == 1)
+			BMPdown[0] = BMPtemp[0];
+		else 
+		{
+			MPI_Send(&(BMPtemp[0][0]), width, MPI_RGB, upper, 0, MPI_COMM_WORLD);
+			MPI_Recv(&(BMPdown[0][0]), width, MPI_RGB, down, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		}
+
+		//Send down
+		if (numprocs == 1)
+			BMPupper[0] = BMPtemp[height-1];
+		else
+		{
+			MPI_Send(&(BMPtemp[height/numprocs-1][0]), width, MPI_RGB, down, 0, MPI_COMM_WORLD);
+			MPI_Recv(&(BMPupper[0][0]), width, MPI_RGB, upper, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		}
+
+		//swap tempData and computing data
+		swap(BMPtemp, BMPData);
+
+		//Smooth
+		for(int i = 0; i<height/numprocs ; i++)
+			for(int j =0; j<width ; j++){
+				/*********************************************************/
+				/*set the position of pixel around                       */
+				/*********************************************************/
+				int Top = i-1;
+				int Down = i+1;
+				int Left = j>0 ? j-1 : width-1;
+				int Right = j<width ? j+1 : 0;
+				/*********************************************************/
+				/*computing pixel data and rounding                      */
+				/*********************************************************/
+
+				BMPtemp[i][j].rgbBlue =  (double) (BMPData[i][j].rgbBlue+
+						(Top >= 0 ? BMPData[Top][j].rgbBlue : BMPupper[0][j].rgbBlue)+
+						(Down < height/numprocs ? BMPData[Down][j].rgbBlue : BMPdown[0][j].rgbBlue)+
+						BMPData[i][Left].rgbBlue+BMPData[i][Right].rgbBlue)/5+0.5;
+				BMPtemp[i][j].rgbGreen =  (double) (BMPData[i][j].rgbGreen+
+						(Top >= 0 ? BMPData[Top][j].rgbGreen : BMPupper[0][j].rgbGreen)+
+						(Down < height/numprocs ? BMPData[Down][j].rgbGreen : BMPdown[0][j].rgbGreen)+
+						BMPData[i][Left].rgbGreen+BMPData[i][Right].rgbGreen)/5+0.5;
+				BMPtemp[i][j].rgbRed =  (double) (BMPData[i][j].rgbRed+
+						(Top >= 0 ? BMPData[Top][j].rgbRed : BMPupper[0][j].rgbRed)+
+						(Down < height/numprocs ? BMPData[Down][j].rgbRed : BMPdown[0][j].rgbRed)+
+						BMPData[i][Left].rgbRed+BMPData[i][Right].rgbRed)/5+0.5;
 			}
 	}
+	
+	//Gather BMPData to proc 0 BMPSaveData
+	swap(BMPtemp, BMPData);
+	MPI_Gatherv(&(BMPData[0][0]), height/numprocs*width, MPI_RGB, globalptr, sendcount, disp, MPI_RGB, 0, MPI_COMM_WORLD);
 
-	/*
-	//¿¿¿¿¿¿¿¿¿
-	for(int count = 0; count < NSmooth ; count ++){
-//update the edge data
-//get upedge
-//get down edge
-
-//Smooth
-for(int i = 0; i<bmpInfo.biHeight ; i++)
-for(int j =0; j<bmpInfo.biWidth ; j++){*/
-/*********************************************************/
-/*¿¿¿¿¿¿¿¿¿¿¿                                 */
-/*********************************************************/
-/*
-   int Top = i>0 ? i-1 : bmpInfo.biHeight-1;
-   int Down = i<bmpInfo.biHeight-1 ? i+1 : 0;
-   int Left = j>0 ? j-1 : bmpInfo.biWidth-1;
-   int Right = j<bmpInfo.biWidth-1 ? j+1 : 0;
-   */
-/*********************************************************/
-/*¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿                       */
-/*********************************************************/
-/*
-   BMPSaveData[i][j].rgbBlue =  (double) (BMPData[i][j].rgbBlue+BMPData[Top][j].rgbBlue+BMPData[Down][j].rgbBlue+BMPData[i][Left].rgbBlue+BMPData[i][Right].rgbBlue)/5+0.5;
-   BMPSaveData[i][j].rgbGreen =  (double) (BMPData[i][j].rgbGreen+BMPData[Top][j].rgbGreen+BMPData[Down][j].rgbGreen+BMPData[i][Left].rgbGreen+BMPData[i][Right].rgbGreen)/5+0.5;
-   BMPSaveData[i][j].rgbRed =  (double) (BMPData[i][j].rgbRed+BMPData[Top][j].rgbRed+BMPData[Down][j].rgbRed+BMPData[i][Left].rgbRed+BMPData[i][Right].rgbRed)/5+0.5;
-   }
-   }
-   */
-	//MPI_Gather(&(BMPData[0][0]), height/numprocs*width, MPI_RGB, globalptr, height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
-
-	//¿¿¿¿
+	//write file
 	if (myid == 0)
 	{
+		//Get endTime and print execution time
+		endwtime = MPI_Wtime();
+		cout << "The execution time = "<< endwtime-startwtime <<endl ;
+		
 		if ( saveBMP( outfileName ) )
 			cout << "Save file successfully!!" << endl;
 		else
 			cout << "Save file fails!!" << endl;
-		//¿¿¿¿¿¿¿¿¿¿¿¿¿¿
-		endwtime = MPI_Wtime()-startwtime;
-		cout << "The execution time = "<< endwtime-startwtime <<endl ;
 	}
 
 	free(BMPData);
@@ -149,87 +186,87 @@ for(int j =0; j<bmpInfo.biWidth ; j++){*/
 }
 
 /*********************************************************/
-/* ¿¿¿¿                                              */
+/* read file                                             */
 /*********************************************************/
 int readBMP(char *fileName)
 {
-	//¿¿¿¿¿¿¿¿	
+	//create read file object	
 	ifstream bmpFile( fileName, ios::in | ios::binary );
 
-	//¿¿¿¿¿¿
+	//file can't be opened
 	if ( !bmpFile ){
 		cout << "It can't open file!!" << endl;
 		return 0;
 	}
 
-	//¿¿BMP¿¿¿¿¿¿¿
+	//read BMPHeader data
 	bmpFile.read( ( char* ) &bmpHeader, sizeof( BMPHEADER ) );
 
-	//¿¿¿¿¿BMP¿¿
+	//determine BMPfile or not
 	if( bmpHeader.bfType != 0x4d42 ){
 		cout << "This file is not .BMP!!" << endl ;
 		return 0;
 	}
 
-	//¿¿BMP¿¿¿
+	//read BMPInfo
 	bmpFile.read( ( char* ) &bmpInfo, sizeof( BMPINFO ) );
 
-	//¿¿¿¿¿¿¿¿¿24 bits
+	//determine if bit depth is 24 bits
 	if ( bmpInfo.biBitCount != 24 ){
 		cout << "The file is not 24 bits!!" << endl;
 		return 0;
 	}
 
-	//¿¿¿¿¿¿¿¿4¿¿¿
+	//fix the width to be multiple of 4
 	while( bmpInfo.biWidth % 4 != 0 )
 		bmpInfo.biWidth++;
 
-	//¿¿¿¿¿¿¿
+	//dynamically allocate memory
 	BMPSaveData = alloc_memory( bmpInfo.biHeight, bmpInfo.biWidth);
 
-	//¿¿¿¿¿¿
+	//read pixel data
 	//for(int i = 0; i < bmpInfo.biHeight; i++)
 	//	bmpFile.read( (char* )BMPSaveData[i], bmpInfo.biWidth*sizeof(RGBTRIPLE));
 	bmpFile.read( (char* )BMPSaveData[0], bmpInfo.biWidth*sizeof(RGBTRIPLE)*bmpInfo.biHeight);
 
-	//¿¿¿¿
+	//close file
 	bmpFile.close();
 
 	return 1;
 
 }
 /*********************************************************/
-/* ¿¿¿¿                                              */
+/* sava BMPData                                              */
 /*********************************************************/
 int saveBMP( char *fileName)
 {
-	//¿¿¿¿¿BMP¿¿
+	//determine BMPfile or not
 	if( bmpHeader.bfType != 0x4d42 ){
 		cout << "This file is not .BMP!!" << endl ;
 		return 0;
 	}
 
-	//¿¿¿¿¿¿¿¿
+	//create weite file object
 	ofstream newFile( fileName,  ios:: out | ios::binary );
 
-	//¿¿¿¿¿¿
+	//file can't be created
 	if ( !newFile ){
 		cout << "The File can't create!!" << endl;
 		return 0;
 	}
 
-	//¿¿BMP¿¿¿¿¿¿¿
+	//write BMPHeader data
 	newFile.write( ( char* )&bmpHeader, sizeof( BMPHEADER ) );
 
-	//¿¿BMP¿¿¿
+	//write BMPData
 	newFile.write( ( char* )&bmpInfo, sizeof( BMPINFO ) );
 
-	//¿¿¿¿¿¿
+	//write pixel data
 	//for( int i = 0; i < bmpInfo.biHeight; i++ )
 	//        newFile.write( ( char* )BMPSaveData[i], bmpInfo.biWidth*sizeof(RGBTRIPLE) );
 	newFile.write( ( char* )BMPSaveData[0], bmpInfo.biWidth*sizeof(RGBTRIPLE)*bmpInfo.biHeight );
 
-	//¿¿¿¿
+	//write file
 	newFile.close();
 
 	return 1;
@@ -238,17 +275,17 @@ int saveBMP( char *fileName)
 
 
 /*********************************************************/
-/* ¿¿¿¿¿¿¿¿¿Y*X¿¿¿                           */
+/* allocate memory : return Y*X array                    */
 /*********************************************************/
 RGBTRIPLE **alloc_memory(int Y, int X )
 {        
-	//
+	//create height Y pointer array
 	RGBTRIPLE **temp = new RGBTRIPLE *[ Y ];
 	RGBTRIPLE *temp2 = new RGBTRIPLE [ Y * X ];
 	memset( temp, 0, sizeof( RGBTRIPLE ) * Y);
 	memset( temp2, 0, sizeof( RGBTRIPLE ) * Y * X );
 
-	//¹ï¨C­Ó«ü¼Ð°}¦C¸Ìªº«ü¼Ð«Å§i¤@­Óªø«×¬°Xªº°}¦C 
+	//declare a length of X array to pointer array
 	for( int i = 0; i < Y; i++){
 		temp[ i ] = &temp2[i*X];
 	}
@@ -257,7 +294,7 @@ return temp;
 
 }
 /*********************************************************/
-/* ¥æ´«¤G­Ó«ü¼Ð                                          */
+/* swap two pointer                                      */
 /*********************************************************/
 void swap(RGBTRIPLE *a, RGBTRIPLE *b)
 {
