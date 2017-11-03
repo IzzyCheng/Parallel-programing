@@ -35,7 +35,6 @@ int readBMP( char *fileName);        //read file
 int saveBMP( char *fileName);        //save file
 void swap(RGBTRIPLE *a, RGBTRIPLE *b);
 RGBTRIPLE **alloc_memory( int Y, int X );        //allocate memory
-MPI_Datatype MPI_RGB;
 
 int main(int argc,char *argv[])
 {
@@ -50,67 +49,97 @@ int main(int argc,char *argv[])
 	char *outfileName = "output2.bmp";
 	double startwtime = 0.0, endwtime=0;
 	int numprocs, myid;
-	int myheight, err;
+	int height = 0, width = 0;
 
 	MPI_Init(&argc,&argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
 	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
-	
-	//cut array
+
 	if (myid == 0)
 	{
+		//start time
 		startwtime = MPI_Wtime();
-
 		//readfile
 		if ( readBMP( infileName) )
 			cout << "Read file successfully!!" << endl;
 		else 
 			cout << "Read file fails!!" << endl;
-		MPI_Type_contiguous(bmpInfo.biWidth, MPI_CHAR, &MPI_RGB);
-		MPI_Type_commit(&MPI_RGB);
-
-		BMPData = alloc_memory( bmpInfo.biHeight/numprocs, bmpInfo.biWidth);
-		MPI_Scatter(BMPSaveData, bmpInfo.biHeight/numprocs, MPI_RGB, BMPData, bmpInfo.biHeight/numprocs, MPI_RGB, 0, MPI_COMM_WORLD);
-	} else {
-		BMPData = alloc_memory( bmpInfo.biHeight/numprocs, bmpInfo.biWidth);
-		MPI_Scatter(BMPSaveData, bmpInfo.biHeight/numprocs, MPI_RGB, BMPData, bmpInfo.biHeight/numprocs, MPI_RGB, 0, MPI_COMM_WORLD);
+		height = bmpInfo.biHeight;
+		width = bmpInfo.biWidth;
+		printf("local height : %d\n\n", height/numprocs);
 	}
 
-	//¿¿¿¿¿¿¿¿¿
-	for(int count = 0; count < NSmooth ; count ++){
-		//update the edge data
-		//get upedge
-		//get down edge
+	//Brocast height & width to other proc
+	MPI_Bcast(&height, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&width, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
 
-		//Smooth
-		for(int i = 0; i<bmpInfo.biHeight ; i++)
-			for(int j =0; j<bmpInfo.biWidth ; j++){
-				/*********************************************************/
-				/*¿¿¿¿¿¿¿¿¿¿¿                                 */
-				/*********************************************************/
-				int Top = i>0 ? i-1 : bmpInfo.biHeight-1;
-				int Down = i<bmpInfo.biHeight-1 ? i+1 : 0;
-				int Left = j>0 ? j-1 : bmpInfo.biWidth-1;
-				int Right = j<bmpInfo.biWidth-1 ? j+1 : 0;
+	//allocate memory
+	BMPData = alloc_memory(height/numprocs, width);
 
-				/*********************************************************/
-				/*¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿                       */
-				/*********************************************************/
-				BMPSaveData[i][j].rgbBlue =  (double) (BMPData[i][j].rgbBlue+BMPData[Top][j].rgbBlue+BMPData[Down][j].rgbBlue+BMPData[i][Left].rgbBlue+BMPData[i][Right].rgbBlue)/5+0.5;
-				BMPSaveData[i][j].rgbGreen =  (double) (BMPData[i][j].rgbGreen+BMPData[Top][j].rgbGreen+BMPData[Down][j].rgbGreen+BMPData[i][Left].rgbGreen+BMPData[i][Right].rgbGreen)/5+0.5;
-				BMPSaveData[i][j].rgbRed =  (double) (BMPData[i][j].rgbRed+BMPData[Top][j].rgbRed+BMPData[Down][j].rgbRed+BMPData[i][Left].rgbRed+BMPData[i][Right].rgbRed)/5+0.5;
+	//create new data type
+	MPI_Datatype MPI_RGB;
+	MPI_Type_contiguous(3, MPI_CHAR, &MPI_RGB);
+	MPI_Type_commit(&MPI_RGB);
+
+	//Scatter data
+	RGBTRIPLE *globalptr = NULL;
+	if (myid == 0)
+		globalptr = &(BMPSaveData[0][0]);
+	MPI_Scatter(globalptr, height/numprocs*width, MPI_RGB, &(BMPData[0][0]), height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	if (myid == 0) {
+		for (int i = 0; i<height; i++)
+			for (int j = 0; j<width; j++) {
+				BMPSaveData[i][j].rgbBlue = 0;
+				BMPSaveData[i][j].rgbGreen = 0;
+				BMPSaveData[i][j].rgbRed = 0;
 			}
 	}
 
-	//¿¿¿¿
-	if ( saveBMP( outfileName ) )
-		cout << "Save file successfully!!" << endl;
-	else
-		cout << "Save file fails!!" << endl;
+	/*
+	//¿¿¿¿¿¿¿¿¿
+	for(int count = 0; count < NSmooth ; count ++){
+//update the edge data
+//get upedge
+//get down edge
 
-	//¿¿¿¿¿¿¿¿¿¿¿¿¿¿
-	endwtime = MPI_Wtime();
-	cout << "The execution time = "<< endwtime-startwtime <<endl ;
+//Smooth
+for(int i = 0; i<bmpInfo.biHeight ; i++)
+for(int j =0; j<bmpInfo.biWidth ; j++){*/
+/*********************************************************/
+/*¿¿¿¿¿¿¿¿¿¿¿                                 */
+/*********************************************************/
+/*
+   int Top = i>0 ? i-1 : bmpInfo.biHeight-1;
+   int Down = i<bmpInfo.biHeight-1 ? i+1 : 0;
+   int Left = j>0 ? j-1 : bmpInfo.biWidth-1;
+   int Right = j<bmpInfo.biWidth-1 ? j+1 : 0;
+   */
+/*********************************************************/
+/*¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿¿                       */
+/*********************************************************/
+/*
+   BMPSaveData[i][j].rgbBlue =  (double) (BMPData[i][j].rgbBlue+BMPData[Top][j].rgbBlue+BMPData[Down][j].rgbBlue+BMPData[i][Left].rgbBlue+BMPData[i][Right].rgbBlue)/5+0.5;
+   BMPSaveData[i][j].rgbGreen =  (double) (BMPData[i][j].rgbGreen+BMPData[Top][j].rgbGreen+BMPData[Down][j].rgbGreen+BMPData[i][Left].rgbGreen+BMPData[i][Right].rgbGreen)/5+0.5;
+   BMPSaveData[i][j].rgbRed =  (double) (BMPData[i][j].rgbRed+BMPData[Top][j].rgbRed+BMPData[Down][j].rgbRed+BMPData[i][Left].rgbRed+BMPData[i][Right].rgbRed)/5+0.5;
+   }
+   }
+   */
+	//MPI_Gather(&(BMPData[0][0]), height/numprocs*width, MPI_RGB, globalptr, height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
+
+	//¿¿¿¿
+	if (myid == 0)
+	{
+		if ( saveBMP( outfileName ) )
+			cout << "Save file successfully!!" << endl;
+		else
+			cout << "Save file fails!!" << endl;
+		//¿¿¿¿¿¿¿¿¿¿¿¿¿¿
+		endwtime = MPI_Wtime()-startwtime;
+		cout << "The execution time = "<< endwtime-startwtime <<endl ;
+	}
 
 	free(BMPData);
 	free(BMPSaveData);
