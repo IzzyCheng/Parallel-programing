@@ -54,8 +54,8 @@ int main(int argc, char *argv[]) {
 	//odd-even sort
 	for (int phase = 0; phase < numprocs; phase++)
 	{
-		int partner;
-		int recv[n/numprocs];
+		int partner = 0;
+        int recv[n/numprocs] = {};
 
 		//Compute partner
 		if (phase % 2 == 0)
