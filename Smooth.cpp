@@ -10,7 +10,7 @@
 using namespace std;
 
 //define Smooth times
-#define NSmooth 1000
+#define NSmooth 100
 
 /*********************************************************/
 /*variable declare                                       */
@@ -94,7 +94,6 @@ int main(int argc,char *argv[])
 	int disp[numprocs];
 	for (int i = 0; i<numprocs; i++)
 		sendcount[i] = height/numprocs*width;
-	//sendcount[numprocs-1] = height*width - height*width*(numprocs-1)/numprocs;
 	for (int i = 0; i<numprocs; i++)
 		disp[i] = i*height/numprocs*width;
 	MPI_Scatterv(globalptr, sendcount, disp, MPI_RGB, &(BMPtemp[0][0]), height/numprocs*width, MPI_RGB, 0, MPI_COMM_WORLD);
@@ -105,47 +104,50 @@ int main(int argc,char *argv[])
 	RGBTRIPLE **BMPdown = alloc_memory(1, width);
 
 	//Start to Smooth Data
-	for(int count = 0; count < NSmooth ; count ++){
-
+	for(int count = 0; count < NSmooth ; count ++)
+	{
 		//update the edge data
 		int upper = myid > 0 ? myid-1 : numprocs-1;
 		int down = myid < numprocs-1 ? myid+1 : 0;
 		
-		//Send upper
+		//Send edge data
 		if (numprocs == 1)
+		{
 			BMPdown[0] = BMPtemp[0];
+			BMPupper[0] = BMPtemp[height-1];
+		}
 		else 
 		{
+			//Send first line data to upper proc
 			MPI_Send(&(BMPtemp[0][0]), width, MPI_RGB, upper, 0, MPI_COMM_WORLD);
+			//Recv down edge data from down proc
 			MPI_Recv(&(BMPdown[0][0]), width, MPI_RGB, down, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		}
-
-		//Send down
-		if (numprocs == 1)
-			BMPupper[0] = BMPtemp[height-1];
-		else
-		{
+			
+			//Send last line data to down proc
 			MPI_Send(&(BMPtemp[height/numprocs-1][0]), width, MPI_RGB, down, 0, MPI_COMM_WORLD);
+			//Recv up edge data from upper proc
 			MPI_Recv(&(BMPupper[0][0]), width, MPI_RGB, upper, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		}
+		MPI_Barrier(MPI_COMM_WORLD);
 
 		//swap tempData and computing data
 		swap(BMPtemp, BMPData);
 
 		//Smooth
 		for(int i = 0; i<height/numprocs ; i++)
-			for(int j =0; j<width ; j++){
+			for(int j =0; j<width ; j++)
+			{
 				/*********************************************************/
 				/*set the position of pixel around                       */
 				/*********************************************************/
 				int Top = i-1;
 				int Down = i+1;
 				int Left = j>0 ? j-1 : width-1;
-				int Right = j<width ? j+1 : 0;
+				int Right = j<width-1 ? j+1 : 0;
+				
 				/*********************************************************/
 				/*computing pixel data and rounding                      */
 				/*********************************************************/
-
 				BMPtemp[i][j].rgbBlue =  (double) (BMPData[i][j].rgbBlue+
 						(Top >= 0 ? BMPData[Top][j].rgbBlue : BMPupper[0][j].rgbBlue)+
 						(Down < height/numprocs ? BMPData[Down][j].rgbBlue : BMPdown[0][j].rgbBlue)+
@@ -159,6 +161,7 @@ int main(int argc,char *argv[])
 						(Down < height/numprocs ? BMPData[Down][j].rgbRed : BMPdown[0][j].rgbRed)+
 						BMPData[i][Left].rgbRed+BMPData[i][Right].rgbRed)/5+0.5;
 			}
+		MPI_Barrier(MPI_COMM_WORLD);
 	}
 	
 	//Gather BMPData to proc 0 BMPSaveData
